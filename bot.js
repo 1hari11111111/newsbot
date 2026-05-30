@@ -99,30 +99,136 @@ function escMD(text) {
   return String(text).replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
 }
 
-function formatEnhanced(article, adminText) {
+// =======================
+// 🔧 Rebuild admin text preserving Telegram entities (blockquotes, bold, etc.)
+// msg.entities contains blockquote, bold, italic, code, text_link etc.
+// We rebuild MarkdownV2 from the raw text + entities
+// =======================
+function rebuildWithEntities(text, entities) {
+  if (!entities || entities.length === 0) {
+    return escMD(text);
+  }
+
+  // Sort entities by offset
+  const sorted = [...entities].sort((a, b) => a.offset - b.offset);
+
+  // Build output char by char using UTF-16 code units (Telegram uses UTF-16 offsets)
+  // Convert to array of chars for correct offset handling
+  const chars = [...text]; // Unicode-safe split
+  let result = "";
+  let i = 0;
+
+  // We'll process segments between/inside entities
+  // Stack-based approach: collect open/close markers per offset
+  const opens = {};
+  const closes = {};
+
+  for (const entity of sorted) {
+    const start = entity.offset;
+    const end = entity.offset + entity.length;
+
+    if (!opens[start]) opens[start] = [];
+    if (!closes[end]) closes[end] = [];
+
+    switch (entity.type) {
+      case "blockquote":
+        // Expandable blockquote: each line prefixed with >
+        opens[start].push({ type: "blockquote_open", end });
+        closes[end].push("blockquote_close");
+        break;
+      case "bold":
+        opens[start].push({ type: "wrap", open: "*", close: "*" });
+        closes[end].push("wrap_*");
+        break;
+      case "italic":
+        opens[start].push({ type: "wrap", open: "_", close: "_" });
+        closes[end].push("wrap__");
+        break;
+      case "code":
+        opens[start].push({ type: "wrap", open: "`", close: "`" });
+        closes[end].push("wrap_`");
+        break;
+      case "text_link":
+        opens[start].push({ type: "link", url: entity.url });
+        closes[end].push("link_close");
+        break;
+    }
+  }
+
+  // Simpler flat approach: just reconstruct segment by segment
+  result = "";
+  let pos = 0;
+  const textArr = Array.from(text); // proper unicode chars
+
+  function escapeSegment(seg) {
+    return seg.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+  }
+
+  // Collect all boundary positions
+  const boundaries = new Set([0, textArr.length]);
+  for (const e of sorted) {
+    boundaries.add(e.offset);
+    boundaries.add(e.offset + e.length);
+  }
+  const boundaryList = [...boundaries].sort((a, b) => a - b);
+
+  for (let b = 0; b < boundaryList.length - 1; b++) {
+    const segStart = boundaryList[b];
+    const segEnd = boundaryList[b + 1];
+    const segment = textArr.slice(segStart, segEnd).join("");
+
+    // Find which entities cover this segment
+    const covering = sorted.filter(e => e.offset <= segStart && e.offset + e.length >= segEnd);
+
+    const blockquoteEntity = covering.find(e => e.type === "blockquote");
+    const boldEntity = covering.find(e => e.type === "bold");
+    const italicEntity = covering.find(e => e.type === "italic");
+    const linkEntity = covering.find(e => e.type === "text_link");
+
+    let seg = escapeSegment(segment);
+
+    if (boldEntity) seg = `*${seg}*`;
+    if (italicEntity) seg = `_${seg}_`;
+    if (linkEntity) seg = `[${seg}](${escapeSegment(linkEntity.url)})`;
+
+    if (blockquoteEntity) {
+      // Wrap each line in the segment with >
+      const isLast = (blockquoteEntity.offset + blockquoteEntity.length) === segEnd &&
+                     b === boundaryList.length - 2;
+      const lines = seg.split("\n");
+      seg = lines.map((line, idx) => {
+        const isLastLine = idx === lines.length - 1;
+        // Add || on the very last line of the blockquote to make it expandable
+        if (isLastLine && (blockquoteEntity.offset + blockquoteEntity.length) === segEnd) {
+          return `>${line}||`;
+        }
+        return `>${line}`;
+      }).join("\n");
+    }
+
+    result += seg;
+  }
+
+  return result;
+}
+
+function formatEnhanced(article, adminText, adminEntities) {
   const p1 = article.description || "No details available.";
   const p2 = cleanContent(article.content);
 
-  // Merge p1 + p2 into ONE expandable blockquote
-  // Telegram MarkdownV2 expandable blockquote:
-  //   >line1\n>line2\n>last line||
-  // Empty lines inside blockquote must also be prefixed with >
-  const combined = `${p1}\n\n${p2}`;
-  const lines = combined.split("\n");
-
-  const quotedLines = lines.map((line, i) => {
+  // News blockquote (p1 only, collapsed)
+  const newsLines = p1.split("\n");
+  const newsQuote = newsLines.map((line, i) => {
     const escaped = escMD(line);
-    // Last line gets || to make it expandable/collapsible
-    if (i === lines.length - 1) return `>${escaped}||`;
+    if (i === newsLines.length - 1) return `>${escaped}||`;
     return `>${escaped}`;
-  });
+  }).join("\n");
 
-  const blockquote = quotedLines.join("\n");
-  const safeAdmin = escMD(adminText);
+  // Admin text rebuilt with original entities preserved
+  const rebuiltAdmin = rebuildWithEntities(adminText, adminEntities);
 
-  return `${blockquote}\n\n${safeAdmin}`;
+  return `${newsQuote}\n\n${rebuiltAdmin}`;
 }
-
 // =======================
 // 📡 Fetch random article
 // =======================
@@ -199,6 +305,7 @@ async function handleAutoEnhance(msg) {
   const chatId = msg.chat.id;
   const messageId = msg.message_id;
   const adminText = msg.text || msg.caption || "";
+  const adminEntities = msg.entities || msg.caption_entities || [];
 
   if (!adminText.trim()) return;
 
@@ -215,7 +322,7 @@ async function handleAutoEnhance(msg) {
       return;
     }
 
-    const caption = formatEnhanced(article, adminText);
+    const caption = formatEnhanced(article, adminText, adminEntities);
 
     // Preserve quoted/replied message if admin replied to something
     const replyToId = msg.reply_to_message ? msg.reply_to_message.message_id : null;
