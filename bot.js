@@ -7,16 +7,9 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
 console.log("🤖 Bot is running...");
 
-// =======================
-// ✅ MongoDB
-// =======================
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.log("DB Error:", err.message));
-
-// =======================
-// ✅ Schemas
-// =======================
 
 const newsSchema = new mongoose.Schema({
   url: { type: String, unique: true },
@@ -25,9 +18,7 @@ const newsSchema = new mongoose.Schema({
 });
 const News = mongoose.model("News", newsSchema);
 
-const userSchema = new mongoose.Schema({
-  userId: { type: Number, unique: true }
-});
+const userSchema = new mongoose.Schema({ userId: { type: Number, unique: true } });
 const User = mongoose.model("User", userSchema);
 
 const chatSchema = new mongoose.Schema({
@@ -37,15 +28,9 @@ const chatSchema = new mongoose.Schema({
 });
 const Chat = mongoose.model("Chat", chatSchema);
 
-// =======================
-// 🔒 Locks
-// =======================
 const activeChats = new Set();
 const recentUrls = new Set();
 
-// =======================
-// 🔑 API KEYS
-// =======================
 const apiKeys = process.env.GNEWS_API_KEYS.split(",");
 let currentKeyIndex = 0;
 let usageCount = 0;
@@ -62,20 +47,10 @@ function getApiKey() {
   return key;
 }
 
-// =======================
-// 🎯 CATEGORY MAP
-// =======================
 const categoryMap = {
-  t: "technology",
-  s: "sports",
-  b: "business",
-  h: "health",
-  e: "entertainment"
+  t: "technology", s: "sports", b: "business", h: "health", e: "entertainment"
 };
 
-// =======================
-// 🎲 Shuffle
-// =======================
 function shuffleArray(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -84,21 +59,11 @@ function shuffleArray(array) {
   return array;
 }
 
-// =======================
-// 🔀 Footer
-// =======================
 const footers = [
   "IGNORE KAR DO 😂😂 AAPKA video aata rahega",
   "Stay tuned for more updates 🔥",
   "Forward karo bhai 😎"
 ];
-
-// =======================
-// 🧹 Escape MarkdownV2 special chars
-// =======================
-function escMD(text) {
-  return String(text).replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
-}
 
 // =======================
 // 🧹 Clean article content
@@ -117,7 +82,7 @@ function cleanContent(raw) {
 }
 
 // =======================
-// 🧠 Format (Mode 1) — plain Markdown
+// 🧠 Format Mode 1 — plain Markdown
 // =======================
 function formatNews(article) {
   const footer = footers[Math.floor(Math.random() * footers.length)];
@@ -127,40 +92,48 @@ function formatNews(article) {
 }
 
 // =======================
-// 🧠 Format (Mode 2) — MarkdownV2 with real blockquote
-// Telegram blockquote: each line starts with ">"
+// 🧠 Format Mode 2 — single collapsible blockquote (MarkdownV2)
+// Telegram expandable blockquote = **>** lines ending with ||
 // =======================
+function escMD(text) {
+  return String(text).replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
+
 function formatEnhanced(article, adminText) {
   const p1 = article.description || "No details available.";
   const p2 = cleanContent(article.content);
 
-  // Build blockquote: prefix every line with >
-  const toBlockquote = (text) =>
-    text.split("\n").map(line => `>${escMD(line)}`).join("\n");
+  // Merge both paragraphs into ONE blockquote block
+  // Telegram expandable blockquote: lines prefixed with **>**, last line uses **>||**
+  const combined = `${p1}\n\n${p2}`;
+  const lines = combined.split("\n");
 
-  const quotedP1 = toBlockquote(p1);
-  const quotedP2 = toBlockquote(p2);
+  // Build expandable blockquote: all lines with >, last line gets >||
+  const quotedLines = lines.map((line, i) => {
+    const escaped = escMD(line);
+    if (i === lines.length - 1) return `**>${escaped}||**`;
+    return `**>${escaped}**`;
+  });
+
+  const blockquote = quotedLines.join("\n");
   const safeAdmin = escMD(adminText);
 
-  return `${quotedP1}\n\n${quotedP2}\n\n${safeAdmin}`;
+  return `${blockquote}\n\n${safeAdmin}`;
 }
 
 // =======================
-// 📡 Fetch random news article
+// 📡 Fetch random article
 // =======================
 async function fetchRandomArticle(categoryKey = null) {
-  let res;
-  let success = false;
+  let res, success = false;
 
   for (let i = 0; i < apiKeys.length; i++) {
     const apiKey = getApiKey();
     try {
-      let url;
-      if (categoryKey && categoryMap[categoryKey]) {
-        url = `https://gnews.io/api/v4/search?q=${categoryMap[categoryKey]}&lang=en&max=100&apikey=${apiKey}`;
-      } else {
-        url = `https://gnews.io/api/v4/top-headlines?lang=en&country=in&max=100&apikey=${apiKey}`;
-      }
+      const q = categoryKey && categoryMap[categoryKey] ? categoryMap[categoryKey] : null;
+      const url = q
+        ? `https://gnews.io/api/v4/search?q=${q}&lang=en&max=100&apikey=${apiKey}`
+        : `https://gnews.io/api/v4/top-headlines?lang=en&country=in&max=100&apikey=${apiKey}`;
       res = await axios.get(url);
       if (res.data && res.data.articles) { success = true; break; }
     } catch {
@@ -171,9 +144,7 @@ async function fetchRandomArticle(categoryKey = null) {
 
   if (!success) return null;
 
-  const articles = shuffleArray(res.data.articles);
-
-  for (const item of articles) {
+  for (const item of shuffleArray(res.data.articles)) {
     if (recentUrls.has(item.url)) continue;
     const exists = await News.findOne({ url: item.url });
     if (!exists) {
@@ -183,7 +154,6 @@ async function fetchRandomArticle(categoryKey = null) {
       return item;
     }
   }
-
   return null;
 }
 
@@ -202,20 +172,17 @@ async function handleNews(msg, categoryKey = null) {
       await User.updateOne({ userId: msg.from.id }, { userId: msg.from.id }, { upsert: true });
     }
     await Chat.updateOne({ chatId }, { chatId, type: msg.chat.type }, { upsert: true });
-
     await bot.deleteMessage(chatId, messageId).catch(() => {});
 
     const article = await fetchRandomArticle(categoryKey);
     if (!article) return;
 
     const caption = formatNews(article);
-
     if (article.image) {
       await bot.sendPhoto(chatId, article.image, { caption, parse_mode: "Markdown" });
     } else {
       await bot.sendMessage(chatId, caption, { parse_mode: "Markdown" });
     }
-
   } catch (err) {
     console.log("MODE1 ERROR:", err.message);
   } finally {
@@ -242,7 +209,7 @@ async function handleAutoEnhance(msg) {
 
     const article = await fetchRandomArticle();
     if (!article) {
-      console.log("MODE2: no article found, keeping original msg");
+      console.log("MODE2: no article found");
       return;
     }
 
@@ -253,18 +220,12 @@ async function handleAutoEnhance(msg) {
     });
 
     if (article.image) {
-      await bot.sendPhoto(chatId, article.image, {
-        caption,
-        parse_mode: "MarkdownV2"
-      });
+      await bot.sendPhoto(chatId, article.image, { caption, parse_mode: "MarkdownV2" });
     } else {
-      await bot.sendMessage(chatId, caption, {
-        parse_mode: "MarkdownV2"
-      });
+      await bot.sendMessage(chatId, caption, { parse_mode: "MarkdownV2" });
     }
 
     console.log("MODE2: done");
-
   } catch (err) {
     console.log("MODE2 ERROR:", err.message);
   } finally {
@@ -273,7 +234,7 @@ async function handleAutoEnhance(msg) {
 }
 
 // =======================
-// ✅ MESSAGE HANDLER (private/group)
+// ✅ MESSAGE HANDLER
 // =======================
 bot.on("message", (msg) => {
   if (!msg.text) return;
@@ -289,47 +250,44 @@ bot.on("channel_post", async (msg) => {
   const chatId = msg.chat.id;
   const text = (msg.text || "").trim();
 
-  // /mode1 — switch to command mode
+  // /mode1
   if (text === "/mode1") {
     await Chat.updateOne({ chatId }, { chatId, type: "channel", mode: 1 }, { upsert: true });
     await bot.deleteMessage(chatId, msg.message_id).catch(() => {});
-    const sent = await bot.sendMessage(chatId, "✅ *Mode 1 activated* — Use /n command to post news", { parse_mode: "Markdown" });
-    setTimeout(() => bot.deleteMessage(chatId, sent.message_id).catch(() => {}), 2000);
+    const sent = await bot.sendMessage(chatId, "✅ Mode 1 activated — Use /n command to post news").catch(e => console.log("SEND ERR:", e.message));
+    if (sent) setTimeout(() => bot.deleteMessage(chatId, sent.message_id).catch(() => {}), 3000);
     return;
   }
 
-  // /mode2 — switch to auto-enhance mode
+  // /mode2
   if (text === "/mode2") {
     await Chat.updateOne({ chatId }, { chatId, type: "channel", mode: 2 }, { upsert: true });
     await bot.deleteMessage(chatId, msg.message_id).catch(() => {});
-    const sent = await bot.sendMessage(chatId, "✅ *Mode 2 activated* — Every admin post will be auto\\-enhanced with news image \\+ snippet", { parse_mode: "MarkdownV2" });
-    setTimeout(() => bot.deleteMessage(chatId, sent.message_id).catch(() => {}), 2000);
+    const sent = await bot.sendMessage(chatId, "✅ Mode 2 activated — Every admin post will be auto-enhanced with news image + snippet").catch(e => console.log("SEND ERR:", e.message));
+    if (sent) setTimeout(() => bot.deleteMessage(chatId, sent.message_id).catch(() => {}), 3000);
     return;
   }
 
-  // /n command — always works regardless of mode
+  // /n command
   if (text.startsWith("/n")) {
     const parts = text.split(" ");
     handleNews(msg, parts[1]);
     return;
   }
 
-  // Auto-enhance — only if Mode 2 is active for this channel
+  // Auto-enhance if mode 2
   try {
     const chatDoc = await Chat.findOne({ chatId });
     const mode = chatDoc ? chatDoc.mode : 1;
     console.log(`CHANNEL POST: chatId=${chatId} mode=${mode} text="${text}"`);
-
-    if (mode === 2) {
-      handleAutoEnhance(msg);
-    }
+    if (mode === 2) handleAutoEnhance(msg);
   } catch (err) {
     console.log("CHANNEL HANDLER ERROR:", err.message);
   }
 });
 
 // =======================
-// 🔌 LOAD ADMIN MODULE
+// 🔌 MODULES
 // =======================
 const admin = require("./admin");
 admin(bot, { User, Chat, News }, {
@@ -337,8 +295,5 @@ admin(bot, { User, Chat, News }, {
   getApiKeyInfo: () => ({ currentKeyIndex, usageCount, maxUsage: MAX_USAGE_PER_KEY })
 });
 
-// =======================
-// 🔌 LOAD START MODULE
-// =======================
 const start = require("./start");
 start(bot);
