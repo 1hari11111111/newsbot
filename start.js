@@ -1,5 +1,4 @@
-module.exports = function (bot, models) {
-  const { Chat } = models;
+module.exports = function (bot) {
 
   // =======================
   // 🚀 START
