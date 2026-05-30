@@ -217,14 +217,20 @@ async function handleAutoEnhance(msg) {
 
     const caption = formatEnhanced(article, adminText);
 
+    // Preserve quoted/replied message if admin replied to something
+    const replyToId = msg.reply_to_message ? msg.reply_to_message.message_id : null;
+
     await bot.deleteMessage(chatId, messageId).catch((e) => {
       console.log("MODE2 DELETE FAILED:", e.message);
     });
 
+    const sendOpts = { parse_mode: "MarkdownV2" };
+    if (replyToId) sendOpts.reply_to_message_id = replyToId;
+
     if (article.image) {
-      await bot.sendPhoto(chatId, article.image, { caption, parse_mode: "MarkdownV2" });
+      await bot.sendPhoto(chatId, article.image, { caption, ...sendOpts });
     } else {
-      await bot.sendMessage(chatId, caption, { parse_mode: "MarkdownV2" });
+      await bot.sendMessage(chatId, caption, sendOpts);
     }
 
     console.log("MODE2: done");
