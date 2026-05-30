@@ -33,7 +33,7 @@ const User = mongoose.model("User", userSchema);
 const chatSchema = new mongoose.Schema({
   chatId: { type: Number, unique: true },
   type: String,
-  mode: { type: Number, default: 1 }  // 1 = command mode, 2 = auto-enhance mode
+  mode: { type: Number, default: 1 }
 });
 const Chat = mongoose.model("Chat", chatSchema);
 
@@ -94,13 +94,10 @@ const footers = [
 ];
 
 // =======================
-// 🧠 Format (Mode 1)
+// 🧹 Escape MarkdownV2 special chars
 // =======================
-function formatNews(article) {
-  const footer = footers[Math.floor(Math.random() * footers.length)];
-  const p1 = article.description || "No details available.";
-  const p2 = cleanContent(article.content);
-  return `📰 *${article.title}*\n\n${p1}\n\n${p2}\n\n${footer}`;
+function escMD(text) {
+  return String(text).replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
 }
 
 // =======================
@@ -120,12 +117,32 @@ function cleanContent(raw) {
 }
 
 // =======================
-// 🧠 Format (Mode 2)
+// 🧠 Format (Mode 1) — plain Markdown
+// =======================
+function formatNews(article) {
+  const footer = footers[Math.floor(Math.random() * footers.length)];
+  const p1 = article.description || "No details available.";
+  const p2 = cleanContent(article.content);
+  return `📰 *${article.title}*\n\n${p1}\n\n${p2}\n\n${footer}`;
+}
+
+// =======================
+// 🧠 Format (Mode 2) — MarkdownV2 with real blockquote
+// Telegram blockquote: each line starts with ">"
 // =======================
 function formatEnhanced(article, adminText) {
   const p1 = article.description || "No details available.";
   const p2 = cleanContent(article.content);
-  return `❝ ${p1}\n\n${p2}\n\n${adminText}`;
+
+  // Build blockquote: prefix every line with >
+  const toBlockquote = (text) =>
+    text.split("\n").map(line => `>${escMD(line)}`).join("\n");
+
+  const quotedP1 = toBlockquote(p1);
+  const quotedP2 = toBlockquote(p2);
+  const safeAdmin = escMD(adminText);
+
+  return `${quotedP1}\n\n${quotedP2}\n\n${safeAdmin}`;
 }
 
 // =======================
@@ -208,10 +225,6 @@ async function handleNews(msg, categoryKey = null) {
 
 // =======================
 // ✨ MODE 2 — Auto-enhance admin post
-// Step 1: bot receives admin text msg
-// Step 2: fetch random article
-// Step 3: delete admin's original msg
-// Step 4: post new msg = news image + (❝ para1 + para2) + admin's original text
 // =======================
 async function handleAutoEnhance(msg) {
   const chatId = msg.chat.id;
@@ -227,36 +240,30 @@ async function handleAutoEnhance(msg) {
   try {
     console.log(`MODE2 START: chatId=${chatId} msgId=${messageId} text="${adminText}"`);
 
-    // Step 1: fetch article first (before deleting — so if fetch fails, original msg stays)
     const article = await fetchRandomArticle();
     if (!article) {
       console.log("MODE2: no article found, keeping original msg");
       return;
     }
 
-    // Step 2: build caption
     const caption = formatEnhanced(article, adminText);
 
-    // Step 3: delete original admin message
-    const deleteResult = await bot.deleteMessage(chatId, messageId).catch((e) => {
+    await bot.deleteMessage(chatId, messageId).catch((e) => {
       console.log("MODE2 DELETE FAILED:", e.message);
-      return null;
     });
-    console.log("MODE2 DELETE:", deleteResult !== null ? "success" : "failed");
 
-    // Step 4: post enhanced message
     if (article.image) {
       await bot.sendPhoto(chatId, article.image, {
         caption,
-        parse_mode: "Markdown"
+        parse_mode: "MarkdownV2"
       });
-      console.log("MODE2: sent photo+caption");
     } else {
       await bot.sendMessage(chatId, caption, {
-        parse_mode: "Markdown"
+        parse_mode: "MarkdownV2"
       });
-      console.log("MODE2: sent text (no image)");
     }
+
+    console.log("MODE2: done");
 
   } catch (err) {
     console.log("MODE2 ERROR:", err.message);
@@ -286,7 +293,8 @@ bot.on("channel_post", async (msg) => {
   if (text === "/mode1") {
     await Chat.updateOne({ chatId }, { chatId, type: "channel", mode: 1 }, { upsert: true });
     await bot.deleteMessage(chatId, msg.message_id).catch(() => {});
-    await bot.sendMessage(chatId, "✅ *Mode 1 activated* — Use /n command to post news", { parse_mode: "Markdown" });
+    const sent = await bot.sendMessage(chatId, "✅ *Mode 1 activated* — Use /n command to post news", { parse_mode: "Markdown" });
+    setTimeout(() => bot.deleteMessage(chatId, sent.message_id).catch(() => {}), 2000);
     return;
   }
 
@@ -294,7 +302,8 @@ bot.on("channel_post", async (msg) => {
   if (text === "/mode2") {
     await Chat.updateOne({ chatId }, { chatId, type: "channel", mode: 2 }, { upsert: true });
     await bot.deleteMessage(chatId, msg.message_id).catch(() => {});
-    await bot.sendMessage(chatId, "✅ *Mode 2 activated* — Every admin post will be auto-enhanced with news image + snippet", { parse_mode: "Markdown" });
+    const sent = await bot.sendMessage(chatId, "✅ *Mode 2 activated* — Every admin post will be auto\\-enhanced with news image \\+ snippet", { parse_mode: "MarkdownV2" });
+    setTimeout(() => bot.deleteMessage(chatId, sent.message_id).catch(() => {}), 2000);
     return;
   }
 
