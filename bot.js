@@ -103,16 +103,18 @@ function formatEnhanced(article, adminText) {
   const p1 = article.description || "No details available.";
   const p2 = cleanContent(article.content);
 
-  // Merge both paragraphs into ONE blockquote block
-  // Telegram expandable blockquote: lines prefixed with **>**, last line uses **>||**
+  // Merge p1 + p2 into ONE expandable blockquote
+  // Telegram MarkdownV2 expandable blockquote:
+  //   >line1\n>line2\n>last line||
+  // Empty lines inside blockquote must also be prefixed with >
   const combined = `${p1}\n\n${p2}`;
   const lines = combined.split("\n");
 
-  // Build expandable blockquote: all lines with >, last line gets >||
   const quotedLines = lines.map((line, i) => {
     const escaped = escMD(line);
-    if (i === lines.length - 1) return `**>${escaped}||**`;
-    return `**>${escaped}**`;
+    // Last line gets || to make it expandable/collapsible
+    if (i === lines.length - 1) return `>${escaped}||`;
+    return `>${escaped}`;
   });
 
   const blockquote = quotedLines.join("\n");
