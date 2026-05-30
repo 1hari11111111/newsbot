@@ -95,118 +95,78 @@ function formatNews(article) {
 // 🧠 Format Mode 2 — single collapsible blockquote (MarkdownV2)
 // Telegram expandable blockquote = **>** lines ending with ||
 // =======================
-function escMD(text) {
-  return String(text).replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+function escHTML(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 // =======================
-// 🔧 Rebuild admin text preserving Telegram entities (blockquotes, bold, etc.)
-// msg.entities contains blockquote, bold, italic, code, text_link etc.
-// We rebuild MarkdownV2 from the raw text + entities
+// 🔧 Rebuild admin text as HTML preserving Telegram entities
 // =======================
-function rebuildWithEntities(text, entities) {
+function rebuildAsHTML(text, entities) {
   if (!entities || entities.length === 0) {
-    return escMD(text);
+    return escHTML(text);
   }
 
-  // Sort entities by offset
-  const sorted = [...entities].sort((a, b) => a.offset - b.offset);
+  const textArr = Array.from(text);
+  const totalLen = textArr.length;
 
-  // Build output char by char using UTF-16 code units (Telegram uses UTF-16 offsets)
-  // Convert to array of chars for correct offset handling
-  const chars = [...text]; // Unicode-safe split
-  let result = "";
-  let i = 0;
+  // Build a list of insert markers at each position
+  const insertBefore = {};  // position -> array of strings to insert before char
+  const insertAfter = {};   // position -> array of strings to insert after char
 
-  // We'll process segments between/inside entities
-  // Stack-based approach: collect open/close markers per offset
-  const opens = {};
-  const closes = {};
+  for (const e of entities) {
+    const s = e.offset;
+    const en = e.offset + e.length;
 
-  for (const entity of sorted) {
-    const start = entity.offset;
-    const end = entity.offset + entity.length;
+    if (!insertBefore[s]) insertBefore[s] = [];
+    if (!insertAfter[en]) insertAfter[en] = [];
 
-    if (!opens[start]) opens[start] = [];
-    if (!closes[end]) closes[end] = [];
-
-    switch (entity.type) {
+    switch (e.type) {
       case "blockquote":
-        // Expandable blockquote: each line prefixed with >
-        opens[start].push({ type: "blockquote_open", end });
-        closes[end].push("blockquote_close");
+        insertBefore[s].push("<blockquote expandable>");
+        insertAfter[en].push("</blockquote>");
         break;
       case "bold":
-        opens[start].push({ type: "wrap", open: "*", close: "*" });
-        closes[end].push("wrap_*");
+        insertBefore[s].push("<b>");
+        insertAfter[en].push("</b>");
         break;
       case "italic":
-        opens[start].push({ type: "wrap", open: "_", close: "_" });
-        closes[end].push("wrap__");
+        insertBefore[s].push("<i>");
+        insertAfter[en].push("</i>");
         break;
       case "code":
-        opens[start].push({ type: "wrap", open: "`", close: "`" });
-        closes[end].push("wrap_`");
+        insertBefore[s].push("<code>");
+        insertAfter[en].push("</code>");
         break;
       case "text_link":
-        opens[start].push({ type: "link", url: entity.url });
-        closes[end].push("link_close");
+        insertBefore[s].push(`<a href="${escHTML(e.url)}">`);
+        insertAfter[en].push("</a>");
+        break;
+      case "underline":
+        insertBefore[s].push("<u>");
+        insertAfter[en].push("</u>");
+        break;
+      case "strikethrough":
+        insertBefore[s].push("<s>");
+        insertAfter[en].push("</s>");
+        break;
+      case "spoiler":
+        insertBefore[s].push('<span class="tg-spoiler">');
+        insertAfter[en].push("</span>");
         break;
     }
   }
 
-  // Simpler flat approach: just reconstruct segment by segment
-  result = "";
-  let pos = 0;
-  const textArr = Array.from(text); // proper unicode chars
-
-  function escapeSegment(seg) {
-    return seg.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
-  }
-
-  // Collect all boundary positions
-  const boundaries = new Set([0, textArr.length]);
-  for (const e of sorted) {
-    boundaries.add(e.offset);
-    boundaries.add(e.offset + e.length);
-  }
-  const boundaryList = [...boundaries].sort((a, b) => a - b);
-
-  for (let b = 0; b < boundaryList.length - 1; b++) {
-    const segStart = boundaryList[b];
-    const segEnd = boundaryList[b + 1];
-    const segment = textArr.slice(segStart, segEnd).join("");
-
-    // Find which entities cover this segment
-    const covering = sorted.filter(e => e.offset <= segStart && e.offset + e.length >= segEnd);
-
-    const blockquoteEntity = covering.find(e => e.type === "blockquote");
-    const boldEntity = covering.find(e => e.type === "bold");
-    const italicEntity = covering.find(e => e.type === "italic");
-    const linkEntity = covering.find(e => e.type === "text_link");
-
-    let seg = escapeSegment(segment);
-
-    if (boldEntity) seg = `*${seg}*`;
-    if (italicEntity) seg = `_${seg}_`;
-    if (linkEntity) seg = `[${seg}](${escapeSegment(linkEntity.url)})`;
-
-    if (blockquoteEntity) {
-      // Wrap each line in the segment with >
-      const isLast = (blockquoteEntity.offset + blockquoteEntity.length) === segEnd &&
-                     b === boundaryList.length - 2;
-      const lines = seg.split("\n");
-      seg = lines.map((line, idx) => {
-        const isLastLine = idx === lines.length - 1;
-        // Add || on the very last line of the blockquote to make it expandable
-        if (isLastLine && (blockquoteEntity.offset + blockquoteEntity.length) === segEnd) {
-          return `>${line}||`;
-        }
-        return `>${line}`;
-      }).join("\n");
-    }
-
-    result += seg;
+  let result = "";
+  for (let i = 0; i <= totalLen; i++) {
+    // Insert closing tags before opening (at same position, closes come first)
+    if (insertAfter[i]) result += insertAfter[i].join("");
+    if (insertBefore[i]) result += insertBefore[i].join("");
+    if (i < totalLen) result += escHTML(textArr[i]);
   }
 
   return result;
@@ -216,16 +176,11 @@ function formatEnhanced(article, adminText, adminEntities) {
   const p1 = article.description || "No details available.";
   const p2 = cleanContent(article.content);
 
-  // News blockquote (p1 only, collapsed)
-  const newsLines = p1.split("\n");
-  const newsQuote = newsLines.map((line, i) => {
-    const escaped = escMD(line);
-    if (i === newsLines.length - 1) return `>${escaped}||`;
-    return `>${escaped}`;
-  }).join("\n");
+  // News snippet as expandable blockquote (HTML)
+  const newsQuote = `<blockquote expandable>${escHTML(p1)}</blockquote>`;
 
-  // Admin text rebuilt with original entities preserved
-  const rebuiltAdmin = rebuildWithEntities(adminText, adminEntities);
+  // Admin text with all original entities preserved as HTML
+  const rebuiltAdmin = rebuildAsHTML(adminText, adminEntities);
 
   return `${newsQuote}\n\n${rebuiltAdmin}`;
 }
@@ -331,7 +286,7 @@ async function handleAutoEnhance(msg) {
       console.log("MODE2 DELETE FAILED:", e.message);
     });
 
-    const sendOpts = { parse_mode: "MarkdownV2" };
+    const sendOpts = { parse_mode: "HTML" };
     if (replyToId) sendOpts.reply_to_message_id = replyToId;
 
     if (article.image) {
