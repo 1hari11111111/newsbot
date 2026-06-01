@@ -163,10 +163,10 @@ function rebuildAsHTML(text, entities) {
 
   let result = "";
   for (let i = 0; i <= totalLen; i++) {
-    // Insert closing tags before opening (at same position, closes come first)
-    if (insertAfter[i]) result += insertAfter[i].join("");
+    // At each position: first open new tags, then char, then close tags
     if (insertBefore[i]) result += insertBefore[i].join("");
     if (i < totalLen) result += escHTML(textArr[i]);
+    if (insertAfter[i]) result += insertAfter[i].reverse().join("");
   }
 
   return result;
@@ -176,10 +176,10 @@ function formatEnhanced(article, adminText, adminEntities) {
   const p1 = article.description || "No details available.";
   const p2 = cleanContent(article.content);
 
-  // News snippet as expandable blockquote (HTML)
-  const newsQuote = `<blockquote expandable>${escHTML(p1)}</blockquote>`;
+  // Two paragraphs in ONE expandable blockquote
+  const newsQuote = `<blockquote expandable>${escHTML(p1)}\n\n${escHTML(p2)}</blockquote>`;
 
-  // Admin text with all original entities preserved as HTML
+  // Admin text with ALL original entities (blockquotes, bold, links etc.) preserved
   const rebuiltAdmin = rebuildAsHTML(adminText, adminEntities);
 
   return `${newsQuote}\n\n${rebuiltAdmin}`;
