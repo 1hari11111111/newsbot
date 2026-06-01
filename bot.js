@@ -111,62 +111,85 @@ function rebuildAsHTML(text, entities) {
     return escHTML(text);
   }
 
-  const textArr = Array.from(text);
-  const totalLen = textArr.length;
+  // Telegram uses UTF-16 code unit offsets.
+  // JS string .length and indexing already use UTF-16, so text[i] and text.length
+  // are exactly what Telegram means — no conversion needed.
+  // However emoji like 😀 are surrogate pairs (2 UTF-16 units) so we must
+  // iterate by UTF-16 code unit, not by codepoint.
+  // Build a UTF-16 units array so index = UTF-16 offset:
+  const utf16 = [];
+  for (let i = 0; i < text.length; i++) {
+    utf16.push(text.charCodeAt(i)); // store code unit value (for escaping, use text[i])
+  }
+  const totalLen = utf16.length;
 
-  // Build a list of insert markers at each position
-  const insertBefore = {};  // position -> array of strings to insert before char
-  const insertAfter = {};   // position -> array of strings to insert after char
+  const insertBefore = {};
+  const insertAfter  = {};
 
   for (const e of entities) {
-    const s = e.offset;
+    const s  = e.offset;
     const en = e.offset + e.length;
-
-    if (!insertBefore[s]) insertBefore[s] = [];
-    if (!insertAfter[en]) insertAfter[en] = [];
+    if (!insertBefore[s])  insertBefore[s]  = [];
+    if (!insertAfter[en])  insertAfter[en]  = [];
 
     switch (e.type) {
       case "blockquote":
         insertBefore[s].push("<blockquote expandable>");
-        insertAfter[en].push("</blockquote>");
+        insertAfter[en].unshift("</blockquote>");
         break;
       case "bold":
         insertBefore[s].push("<b>");
-        insertAfter[en].push("</b>");
+        insertAfter[en].unshift("</b>");
         break;
       case "italic":
         insertBefore[s].push("<i>");
-        insertAfter[en].push("</i>");
+        insertAfter[en].unshift("</i>");
         break;
       case "code":
         insertBefore[s].push("<code>");
-        insertAfter[en].push("</code>");
+        insertAfter[en].unshift("</code>");
         break;
       case "text_link":
         insertBefore[s].push(`<a href="${escHTML(e.url)}">`);
-        insertAfter[en].push("</a>");
+        insertAfter[en].unshift("</a>");
         break;
       case "underline":
         insertBefore[s].push("<u>");
-        insertAfter[en].push("</u>");
+        insertAfter[en].unshift("</u>");
         break;
       case "strikethrough":
         insertBefore[s].push("<s>");
-        insertAfter[en].push("</s>");
+        insertAfter[en].unshift("</s>");
         break;
       case "spoiler":
         insertBefore[s].push('<span class="tg-spoiler">');
-        insertAfter[en].push("</span>");
+        insertAfter[en].unshift("</span>");
         break;
     }
   }
 
   let result = "";
   for (let i = 0; i <= totalLen; i++) {
-    // At each position: first open new tags, then char, then close tags
     if (insertBefore[i]) result += insertBefore[i].join("");
-    if (i < totalLen) result += escHTML(textArr[i]);
-    if (insertAfter[i]) result += insertAfter[i].reverse().join("");
+    if (i < totalLen) {
+      const code = text.charCodeAt(i);
+      // Surrogate pair: high surrogate (0xD800-0xDBFF) + low surrogate (0xDC00-0xDFFF)
+      // Both halves are ONE emoji visually — escape both together as one unit
+      if (code >= 0xD800 && code <= 0xDBFF && i + 1 < totalLen) {
+        const nextCode = text.charCodeAt(i + 1);
+        if (nextCode >= 0xDC00 && nextCode <= 0xDFFF) {
+          // emit both surrogates as one escaped unit, then skip next in outer loop
+          result += escHTML(text[i] + text[i + 1]);
+          if (insertAfter[i])   result += insertAfter[i].join("");
+          i++; // skip low surrogate index
+          if (insertBefore[i]) result += insertBefore[i].join("");
+          if (insertAfter[i])  result += insertAfter[i].join("");
+          continue;
+        }
+      }
+      result += escHTML(text[i]);
+    }
+    if (insertAfter[i])  result += insertAfter[i].join("");
   }
 
   return result;
@@ -177,7 +200,7 @@ function formatEnhanced(article, adminText, adminEntities) {
   const p2 = cleanContent(article.content);
 
   // Two paragraphs in ONE expandable blockquote
-  const newsQuote = `<blockquote expandable>${escHTML(p1)}\n\n${escHTML(p2)}</blockquote>`;
+  const newsQuote = `<blockquote>${escHTML(p1)}\n\n${escHTML(p2)}</blockquote>`;
 
   // Admin text with ALL original entities (blockquotes, bold, links etc.) preserved
   const rebuiltAdmin = rebuildAsHTML(adminText, adminEntities);
