@@ -200,7 +200,7 @@ function formatEnhanced(article, adminText, adminEntities) {
   const p2 = cleanContent(article.content);
 
   // Two paragraphs in ONE expandable blockquote
-  const newsQuote = `<blockquote>${escHTML(p1)}\n\n${escHTML(p2)}</blockquote>`;
+  const newsQuote = `<blockquote expandable>${escHTML(p1)}\n\n${escHTML(p2)}</blockquote>`;
 
   // Admin text with ALL original entities (blockquotes, bold, links etc.) preserved
   const rebuiltAdmin = rebuildAsHTML(adminText, adminEntities);
